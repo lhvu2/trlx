@@ -117,6 +117,9 @@ class AccelerateRLTrainer(BaseRLTrainer):
                 config_dict_flat["optimizer/kwargs/beta_1"] = config_dict_flat["optimizer/kwargs/betas"][0]
                 config_dict_flat["optimizer/kwargs/beta_2"] = config_dict_flat["optimizer/kwargs/betas"][1]
                 config_dict_flat.pop("optimizer/kwargs/betas", None)
+                for ix, tag in enumerate(config_dict_flat.pop("train/tags")):
+                    config_dict_flat[f"train/tag_{ix}"] = tag
+
                 self.accelerator.init_trackers(
                     project_name=self.config.train.project_name,
                     config=config_dict_flat,
@@ -128,6 +131,16 @@ class AccelerateRLTrainer(BaseRLTrainer):
                     f"Only supported trackers are `wandb` and `tensorboard`. Got: `{config.train.tracker}`. "
                     "Set `tracker` to `None` to disable tracking."
                 )
+
+        self.nth_evaluation = 0
+        self.generate_sweep_kwarg = None
+        for k, v in self.config.method.gen_kwargs.items():
+            if isinstance(v, list):
+                if self.generate_sweep_kwarg is not None:
+                    logger.info("Only a single sweep is allowed, {k} is going to be set to {v[0]}")
+                    self.generate_kwargs[k] = v[0]
+                else:
+                    self.generate_sweep_kwarg = (k, v)
 
     def setup_model(self):
         """
@@ -219,9 +232,11 @@ class AccelerateRLTrainer(BaseRLTrainer):
 
             # Recover the last <eos> if it was present in the original sample
             # or add one if it was trimmed with `self.stop_sequences`.
-            # Only in cases when a generation ended due to `max_new_tokens` exhaustion,
-            # <eos> token would not be present in the original sample
-            if append_eos_token and (trimmed or sample[-1] == self.tokenizer.eos_token_id):
+            # When a generation ended due to `max_new_tokens` exhaustion,
+            # only then <pad> or <eos> token would not be present in the original sample at the end
+            if append_eos_token and (
+                trimmed or sample[-1] == self.tokenizer.eos_token_id or sample[-1] == self.tokenizer.pad_token_id
+            ):
                 str_output += self.tokenizer.eos_token
 
             str_prompts.append(str_prompt)
@@ -478,15 +493,6 @@ class AccelerateRLTrainer(BaseRLTrainer):
         """
         logger.info("Starting training")
 
-        self.generate_sweep_kwarg = None
-        for k, v in self.config.method.gen_kwargs.items():
-            if isinstance(v, list):
-                if self.generate_sweep_kwarg is not None:
-                    logger.info("Only a single sweep is allowed, {k} is going to be set to {v[0]}")
-                    self.generate_kwargs[k] = v[0]
-                else:
-                    self.generate_sweep_kwarg = (k, v)
-
         self.prepare_learning()
         self.iter_count = 0
         self.nth_evaluation = 0
@@ -615,6 +621,11 @@ class AccelerateRLTrainer(BaseRLTrainer):
     @abstractmethod
     def loss(self, batch) -> Tuple[float, Dict]:
         """Compute loss on a batch from `store` and return some statistics"""
+        pass
+
+    @abstractmethod
+    def prepare_learning(self):
+        """Do something before the start of training"""
         pass
 
     @abstractmethod
