@@ -86,6 +86,10 @@ def train(  # noqa: C901
 
     batch_size = config.train.batch_size * int(os.environ.get("WORLD_SIZE", 1))
     max_prompt_length = config.train.seq_length - config.method.gen_kwargs["max_new_tokens"]
+    print(f"trainer: {trainer}")
+    print(f"trainer model: {trainer.model}")
+    print(f"trainer ref model: {trainer.ref_model}")
+    print(f"batch_size: {batch_size}, max_prompt_length: {max_prompt_length}")
 
     # Online training against a reward function (e.g. PPO)
     if reward_fn:
