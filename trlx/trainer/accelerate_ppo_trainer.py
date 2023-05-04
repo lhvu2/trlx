@@ -263,100 +263,6 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                 input_ids=input_ids, attention_mask=attention_mask, **kwargs
             )
 
-    from typing import Dict, List, Optional, Tuple
-    def decode_with_ref_samples(
-        self,
-        prompts: List[torch.LongTensor],
-        samples: List[torch.LongTensor],
-        ref_samples: List[torch.LongTensor],
-        prompt_sizes: torch.LongTensor = None,
-        append_eos_token: bool = False
-    ) -> Tuple[List[str], List[str], List[str]]:
-        """
-        Decode tensor generations into lists of strings
-        (`samples`: List[str], `prompts`: List[str], `outputs`: List[str])
-        """
-        if prompt_sizes is None:
-            # Assuming prompts were left-padded
-            prompt_sizes = [prompts.shape[1]] * len(prompts)
-
-        str_samples, str_prompts, str_outputs = [], [], []
-        for prompt, sample, prompt_size in zip(prompts, samples, prompt_sizes):
-            if self.config.model.model_arch_type == "seq2seq":
-                output_start_ix = 0
-            else:
-                output_start_ix = prompt_size
-
-            str_prompt = self.tokenizer.decode(prompt[:prompt_size], skip_special_tokens=True)
-            str_output = self.tokenizer.decode(sample[output_start_ix:], skip_special_tokens=True)
-            # Trim outputs up to `self.stop_sequences` if any are present
-            trimmed = False
-            if self.stop_sequences:
-                for stop in self.stop_sequences:
-                    stop_ix = str_output.find(stop)
-                    if stop_ix >= 0:
-                        str_output = str_output[:stop_ix].rstrip()
-                        trimmed = True
-
-            # Recover the last <eos> if it was present in the original sample
-            # or add one if it was trimmed with `self.stop_sequences`.
-            # When a generation ended due to `max_new_tokens` exhaustion,
-            # only then <pad> or <eos> token would not be present in the original sample at the end
-            if append_eos_token and (
-                trimmed or sample[-1] == self.tokenizer.eos_token_id or sample[-1] == self.tokenizer.pad_token_id
-            ):
-                str_output += self.tokenizer.eos_token
-
-            str_prompts.append(str_prompt)
-            str_outputs.append(str_output)
-
-            if self.config.model.model_arch_type == "seq2seq":
-                sample = str_prompt + self.tokenizer.sep_token + str_output
-            else:
-                sample = str_prompt + str_output
-
-            str_samples.append(sample)
-
-        # process output of ref_model
-        str_ref_samples, str_ref_prompts, str_ref_outputs = [], [], []
-        for prompt, sample, prompt_size in zip(prompts, ref_samples, prompt_sizes):
-            if self.config.model.model_arch_type == "seq2seq":
-                output_start_ix = 0
-            else:
-                output_start_ix = prompt_size
-
-            str_prompt = self.tokenizer.decode(prompt[:prompt_size], skip_special_tokens=True)
-            str_output = self.tokenizer.decode(sample[output_start_ix:], skip_special_tokens=True)
-            # Trim outputs up to `self.stop_sequences` if any are present
-            trimmed = False
-            if self.stop_sequences:
-                for stop in self.stop_sequences:
-                    stop_ix = str_output.find(stop)
-                    if stop_ix >= 0:
-                        str_output = str_output[:stop_ix].rstrip()
-                        trimmed = True
-
-            # Recover the last <eos> if it was present in the original sample
-            # or add one if it was trimmed with `self.stop_sequences`.
-            # When a generation ended due to `max_new_tokens` exhaustion,
-            # only then <pad> or <eos> token would not be present in the original sample at the end
-            if append_eos_token and (
-                trimmed or sample[-1] == self.tokenizer.eos_token_id or sample[-1] == self.tokenizer.pad_token_id
-            ):
-                str_output += self.tokenizer.eos_token
-
-            str_ref_prompts.append(str_prompt)
-            str_ref_outputs.append(str_output)
-
-            if self.config.model.model_arch_type == "seq2seq":
-                sample = str_prompt + self.tokenizer.sep_token + str_output
-            else:
-                sample = str_prompt + str_output
-
-            str_ref_samples.append(sample)
-
-        #return str_samples, str_prompts, str_outputs, str_ref_samples, str_ref_prompts, str_ref_outputs
-        return str_samples, str_prompts, str_outputs
 
     def make_experience(self, num_rollouts: int = 1024, iter_count: int = 0):  # noqa:
         """Make experiences
@@ -412,38 +318,30 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             gathered_prompt_sizes = self.accelerator.gather(prompt_sizes)
             metadata = gather_dict({k: v for k, v in batch.items() if k != "input_ids" and k != "attention_mask"})
 
-            # ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"])
-            # padded_ref_samples = self.accelerator.pad_across_processes(
-            #     ref_samples, dim=1, pad_index=self.tokenizer.eos_token_id, pad_first=False
-            # )
-            # gathered_ref_samples = self.accelerator.gather(padded_ref_samples)
+            ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"])
+            padded_ref_samples = self.accelerator.pad_across_processes(
+                 ref_samples, dim=1, pad_index=self.tokenizer.eos_token_id, pad_first=False
+            )
+            gathered_ref_samples = self.accelerator.gather(padded_ref_samples)
 
             if self.accelerator.is_main_process:
                 all_str_samples, all_str_prompts, all_str_outputs = self.decode(
                     gathered_prompts, gathered_samples, gathered_prompt_sizes, append_eos_token=True
                 )
 
-                #all_str_ref_samples, all_str_ref_prompts, all_str_ref_outputs = self.decode(
-                #    gathered_prompts, gathered_ref_samples, gathered_prompt_sizes, append_eos_token=True
-                #)
+                all_str_ref_samples, all_str_ref_prompts, all_str_ref_outputs = self.decode(
+                    gathered_prompts, gathered_ref_samples, gathered_prompt_sizes, append_eos_token=True
+                )
 
-                #all_str_samples, all_str_prompts, all_str_outputs, \
-                # all_str_ref_samples, all_str_ref_prompts, all_str_ref_outputs = self.decode_with_ref_samples(
-                #     prompts=gathered_prompts,
-                #     samples=gathered_samples,
-                #     prompt_sizes=gathered_prompt_sizes,
-                #     append_eos_token=True,
-                #     ref_samples=gathered_ref_samples,
-                # )
                 rollout_score_time = time()
                 all_scores = torch.tensor(
                     self.reward_fn(
                         samples=all_str_samples,
                         prompts=all_str_prompts,
                         outputs=all_str_outputs,
-                        #ref_prompts=all_str_ref_prompts,
-                        #ref_samples=all_str_ref_samples,
-                        #ref_outputs=all_str_ref_outputs,
+                        ref_prompts=all_str_ref_prompts,
+                        ref_samples=all_str_ref_samples,
+                        ref_outputs=all_str_ref_outputs,
                         **metadata
                     ),
                     dtype=torch.float,
