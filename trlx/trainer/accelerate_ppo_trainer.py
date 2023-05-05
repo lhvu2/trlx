@@ -300,6 +300,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
 
             # Generate samples from the language model (similar to using HuggingFace `generate` method)
             samples = self.generate(batch["input_ids"], batch["attention_mask"], do_sample=False)
+            # samples = self.generate(batch["input_ids"], batch["attention_mask"])
             stats["time/rollout_generate"] = time() - rollout_generate_time
 
             prompt_tensors = batch.input_ids
@@ -319,6 +320,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             metadata = gather_dict({k: v for k, v in batch.items() if k != "input_ids" and k != "attention_mask"})
 
             ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"], do_sample=False)
+            # ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"])
             padded_ref_samples = self.accelerator.pad_across_processes(
                  ref_samples, dim=1, pad_index=self.tokenizer.eos_token_id, pad_first=False
             )
