@@ -408,7 +408,11 @@ class AccelerateRLTrainer(BaseRLTrainer):
                 if self.reward_fn:
                     logger.info("Computing rewards")
                     rewards = torch.tensor(
-                        self.reward_fn(samples=str_samples, prompts=str_prompts, outputs=str_outputs, **metadata),
+                        self.reward_fn(samples=str_samples, 
+                            prompts=str_prompts, 
+                            outputs=str_outputs, 
+                            mode="eval",
+                            **metadata),
                         dtype=float,
                     )
                     mean_reward = rewards.mean().item()
@@ -498,6 +502,7 @@ class AccelerateRLTrainer(BaseRLTrainer):
         self.nth_evaluation = 0
 
         if ray.is_initialized():
+            print("Ray is initialized. Print out the evaluation before training\n=========\n")
             checkpoint = session.get_checkpoint()
             if checkpoint:
                 with checkpoint.as_directory() as dir:
@@ -507,8 +512,14 @@ class AccelerateRLTrainer(BaseRLTrainer):
                         state = json.load(f)
                         self.iter_count = state["iter_count"]
         else:
+            print("Ray is NOT initialized. START Print out the evaluation before training\n=========\n")
             results = self.evaluate()
             self.accelerator.log(results, step=self.iter_count)
+
+            results_ref_model = self.evaluate_ref_model()
+            self.accelerator.log(results_ref_model, step=self.iter_count)
+            print("Ray is NOT initialized. DONE Print out the evaluation before training\n=========\n")
+
 
         tbar = logging.tqdm(
             initial=self.iter_count,
@@ -583,6 +594,7 @@ class AccelerateRLTrainer(BaseRLTrainer):
 
                     if self.iter_count % self.config.train.eval_interval == 0 or self.iter_count >= self.total_steps:
                         results = self.evaluate()
+                        results_ref_model = self.evaluate_ref_model()
                         stats.update(results)
                         print(f"Evaluation, epoc:{epoc}, iter_count: {self.iter_count}, total_steps: {self.total_steps}, mini batch counter: {mbc}, number update per batch: {nubc}")
                         print(f"Evaluation, best reward: {best_reward}, epoc:{epoc}, config.train.eval_interval: {self.config.train.eval_interval}")

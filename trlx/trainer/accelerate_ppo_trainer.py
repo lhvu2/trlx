@@ -24,7 +24,9 @@ from trlx.pipeline.offline_pipeline import PromptPipeline
 from trlx.pipeline.ppo_pipeline import PPORolloutStorage
 from trlx.trainer import register_trainer
 from trlx.trainer.accelerate_base_trainer import AccelerateRLTrainer
-from trlx.utils import Clock, infinite_dataloader
+from trlx.utils import Clock, infinite_dataloader, significant
+from rich.console import Console
+from rich.table import Table
 from trlx.utils.modeling import RunningMoments, gather_dict, logprobs_of_labels
 
 logger = logging.get_logger(__name__)
@@ -263,6 +265,179 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                 input_ids=input_ids, attention_mask=attention_mask, **kwargs
             )
 
+    def generate_eval_ref_model(self, input_ids, attention_mask=None, **kwargs):
+        """Wraps hf's `generate` adding some specific method's defaults"""
+        input_ids = input_ids.to(self.accelerator.device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.accelerator.device)
+
+        kwargs = dict(self.generate_kwargs, **kwargs)
+
+        with torch.no_grad():
+            return self.accelerator.unwrap_model(self.ref_model).generate(
+                input_ids=input_ids, attention_mask=attention_mask, **kwargs
+            )
+
+
+    def evaluate_ref_model(self):  # noqa: C901
+        """Samples model on `eval_prompts`, logs stats with `reward_fn` or `metric_fn` if provided"""
+        logger.info("Evaluating ref_model")
+        print("Evaluating ref_model")
+
+        # Do multiple evaluations over a single list in `gen_kwargs` if present
+        if self.generate_sweep_kwarg is not None:
+            gen_sweep_arg, gen_sweep_values = self.generate_sweep_kwarg
+        else:
+            gen_sweep_values = [None]
+
+        desc = [
+            f"generation sweep 0/{len(gen_sweep_values)}",
+            f"eval batch 0/{len(self.eval_dataloader)}",
+        ]
+        tbar = logging.tqdm(
+            total=len(self.eval_dataloader) * len(gen_sweep_values),
+            desc=f"[{' | '.join(desc)}]",
+            disable=not self.accelerator.is_main_process,
+            position=0,
+            leave=True,
+        )
+
+        stats = {}
+        table = []
+
+        for i_sweep, gen_sweep_value in enumerate(gen_sweep_values):
+            # A dedicated suffix for wandb logging
+            if gen_sweep_value is not None:
+                sweep_suffix = f"@{gen_sweep_arg}={gen_sweep_value}"
+            else:
+                sweep_suffix = ""
+
+            all_samples = []
+            all_prompts = []
+            all_prompt_sizes = []
+            all_metadata = []
+            generate_time = time()
+            for i_prompt, prompts in enumerate(self.eval_dataloader):
+                metadata = {k: v for k, v in prompts.items() if k != "input_ids" and k != "attention_mask"}
+                if self.generate_sweep_kwarg:
+                    samples = self.generate_eval_ref_model(
+                        prompts["input_ids"], prompts["attention_mask"], **{gen_sweep_arg: gen_sweep_value}
+                    )
+                else:
+                    samples = self.generate_eval_ref_model(prompts["input_ids"], prompts["attention_mask"])
+
+                # TODO(reciprocated): this should be moved into `decode`
+                # but that needs to be synced with indexing in `make_experience`
+                if self.config.model.model_arch_type == "seq2seq":
+                    samples = samples[:, 1:].contiguous()
+
+                prompt_sizes = torch.tensor(prompts.input_ids.shape[1]).repeat(len(prompts.input_ids))
+                prompts, samples, prompt_sizes = self.accelerator.gather_for_metrics(
+                    self.accelerator.pad_across_processes(
+                        [prompts.input_ids, samples, prompt_sizes.to(samples.device)],
+                        dim=1,
+                        pad_index=self.tokenizer.pad_token_id,
+                    )
+                )
+                all_samples.extend(samples.tolist())
+                all_prompts.extend(prompts.tolist())
+                all_prompt_sizes.extend(prompt_sizes.tolist())
+
+                metadata = gather_dict(metadata, self.accelerator.gradient_state)
+                all_metadata.append(metadata)
+
+                desc = [
+                    f"generation sweep {i_sweep + 1}/{len(gen_sweep_values)}",
+                    f"eval batch {i_prompt + 1}/{len(self.eval_dataloader)}",
+                ]
+                tbar.set_description(f"[{' | '.join(desc)}]")
+                tbar.update()
+            tbar.close()
+
+            stats["time/generate"] = time() - generate_time
+
+            if self.accelerator.is_main_process:
+                str_samples, str_prompts, str_outputs = self.decode(all_prompts, all_samples, all_prompt_sizes)
+
+                columns = ["prompt", "output"]
+                columns_data = [str_prompts, str_outputs]
+
+                metadata, *xs = all_metadata
+                for k in metadata:
+                    for x in xs:
+                        metadata[k].extend(x[k])
+
+                # in online setting, compute the reward for validation
+                if self.reward_fn:
+                    logger.info("Computing ref_model rewards")
+                    rewards = torch.tensor(
+                        self.reward_fn(
+                            samples=str_samples, 
+                            prompts=str_prompts, 
+                            outputs=str_outputs, 
+                            mode="ref_eval",
+                            **metadata),
+                        dtype=float,
+                    )
+                    mean_reward = rewards.mean().item()
+                    columns.append("ref reward")
+                    if not isinstance(rewards, list):
+                        rewards = rewards.tolist()
+                    columns_data.append(rewards)
+                    stats[f"reward/mean{sweep_suffix}"] = mean_reward
+
+                # additionally log any other metrics
+                if self.metric_fn:
+                    logger.info("Computing ref_model metrics")
+                    metric_time = time()
+                    metrics = self.metric_fn(samples=str_samples, prompts=str_prompts, outputs=str_outputs, **metadata)
+                    stats["time/metric"] = time() - metric_time
+
+                    mean_metrics = {
+                        f"metrics/{k}{sweep_suffix}": torch.as_tensor(xs).mean(-1).item() for k, xs in metrics.items()
+                    }
+
+                    stats.update(mean_metrics)
+
+                    for metric, values in metrics.items():
+                        # Skip metrics that are scalers since they represent aggregated values
+                        if isinstance(values, float):
+                            continue
+                        columns.append(metric)
+                        if not isinstance(values, list):
+                            values = values.tolist()
+                        columns_data.append(values)
+
+                # Prepend the sweep argument along with samples
+                if self.generate_sweep_kwarg:
+                    columns.insert(0, gen_sweep_arg)
+                    columns_data.insert(0, [gen_sweep_value] * len(samples))
+
+                table.append(list(zip(*columns_data)))
+
+        # Log and display evaluation metrics
+        logger.info("Summarizing ref_model evaluation")
+        if self.accelerator.is_main_process:
+            rows = sum(list(map(list, zip(*table))), [])
+
+            # Add metrics/rewards to the table's title
+            table_title = f"ref_model, Evaluation #{self.nth_evaluation}"
+            for k, x in stats.items():
+                if k.startswith("reward") or k.startswith("metrics"):
+                    table_title += f" {k}: {significant(x)}"
+
+            rich_table = Table(*columns, title=table_title, show_lines=True)
+            for ix in range(max(min(3, len(rows)), len(gen_sweep_values))):
+                rich_table.add_row(*[str(significant(x)) for x in rows[ix]])
+            Console().print(rich_table)
+
+            if self.config.train.tracker == "wandb":
+                import wandb
+
+                stats["samples"] = wandb.Table(columns, rows)
+
+        self.nth_evaluation += 1
+        return stats
 
     def make_experience(self, num_rollouts: int = 1024, iter_count: int = 0):  # noqa:
         """Make experiences
@@ -319,21 +494,21 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             gathered_prompt_sizes = self.accelerator.gather(prompt_sizes)
             metadata = gather_dict({k: v for k, v in batch.items() if k != "input_ids" and k != "attention_mask"})
 
-            ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"], do_sample=False)
-            # ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"])
-            padded_ref_samples = self.accelerator.pad_across_processes(
-                 ref_samples, dim=1, pad_index=self.tokenizer.eos_token_id, pad_first=False
-            )
-            gathered_ref_samples = self.accelerator.gather(padded_ref_samples)
+            #ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"], do_sample=False)
+            #ref_samples = self.generate_ref_model(batch["input_ids"], batch["attention_mask"])
+            #padded_ref_samples = self.accelerator.pad_across_processes(
+            #    ref_samples, dim=1, pad_index=self.tokenizer.eos_token_id, pad_first=False
+            #)
+            #gathered_ref_samples = self.accelerator.gather(padded_ref_samples)
 
             if self.accelerator.is_main_process:
                 all_str_samples, all_str_prompts, all_str_outputs = self.decode(
                     gathered_prompts, gathered_samples, gathered_prompt_sizes, append_eos_token=True
                 )
 
-                all_str_ref_samples, all_str_ref_prompts, all_str_ref_outputs = self.decode(
-                    gathered_prompts, gathered_ref_samples, gathered_prompt_sizes, append_eos_token=True
-                )
+                #all_str_ref_samples, all_str_ref_prompts, all_str_ref_outputs = self.decode(
+                #    gathered_prompts, gathered_ref_samples, gathered_prompt_sizes, append_eos_token=True
+                #)
 
                 rollout_score_time = time()
                 all_scores = torch.tensor(
@@ -341,9 +516,10 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                         samples=all_str_samples,
                         prompts=all_str_prompts,
                         outputs=all_str_outputs,
-                        ref_prompts=all_str_ref_prompts,
-                        ref_samples=all_str_ref_samples,
-                        ref_outputs=all_str_ref_outputs,
+                        mode="train",
+                        #ref_prompts=all_str_ref_prompts,
+                        #ref_samples=all_str_ref_samples,
+                        #ref_outputs=all_str_ref_outputs,
                         **metadata
                     ),
                     dtype=torch.float,
