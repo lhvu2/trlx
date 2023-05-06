@@ -408,11 +408,7 @@ class AccelerateRLTrainer(BaseRLTrainer):
                 if self.reward_fn:
                     logger.info("Computing rewards")
                     rewards = torch.tensor(
-                        self.reward_fn(samples=str_samples, 
-                            prompts=str_prompts, 
-                            outputs=str_outputs, 
-                            mode="eval",
-                            **metadata),
+                        self.reward_fn(samples=str_samples, prompts=str_prompts, outputs=str_outputs, **metadata),
                         dtype=float,
                     )
                     mean_reward = rewards.mean().item()
@@ -502,7 +498,6 @@ class AccelerateRLTrainer(BaseRLTrainer):
         self.nth_evaluation = 0
 
         if ray.is_initialized():
-            print("Ray is initialized. Print out the evaluation before training\n=========\n")
             checkpoint = session.get_checkpoint()
             if checkpoint:
                 with checkpoint.as_directory() as dir:
@@ -512,14 +507,8 @@ class AccelerateRLTrainer(BaseRLTrainer):
                         state = json.load(f)
                         self.iter_count = state["iter_count"]
         else:
-            print("Ray is NOT initialized. START Print out the evaluation before training\n=========\n")
             results = self.evaluate()
             self.accelerator.log(results, step=self.iter_count)
-
-            results_ref_model = self.evaluate_ref_model()
-            self.accelerator.log(results_ref_model, step=self.iter_count)
-            print("Ray is NOT initialized. DONE Print out the evaluation before training\n=========\n")
-
 
         tbar = logging.tqdm(
             initial=self.iter_count,
@@ -531,18 +520,12 @@ class AccelerateRLTrainer(BaseRLTrainer):
 
         best_reward = -float("inf")
 
-        epoc = 0 # epoch counter
         # For each epoch
         for _ in range(self.config.train.epochs):
-            epoc += 1
             # For each batch
-            mbc = 0  # mini batch counter
             for mbs in MiniBatchIterator(self.train_dataloader, self.mb_size, self.num_mb):
-                mbc += 1
                 # For each update per batch
-                nubc = 0  # number of updates per batch
                 for _ in range(self.n_updates_per_batch):
-                    nubc += 1
                     # Note that whereas standard policy gradient methods perform one
                     # gradient update per batch, PPO for example commonly performs
                     # multiple gradient updates on the same batch of data.
@@ -560,8 +543,6 @@ class AccelerateRLTrainer(BaseRLTrainer):
                             backward_time += time()
                             stats_accum.append(stats)
 
-                    print(
-                        f"\nAfter forward/backward updates, epoc:{epoc}, iter_count: {self.iter_count}, mini batch counter: {mbc}, number update per batch: {nubc}")
                     forward_time /= self.num_mb
                     backward_time /= self.num_mb
                     # TODO(Dahoas): Best way to combine stats between mbs?
@@ -572,13 +553,11 @@ class AccelerateRLTrainer(BaseRLTrainer):
                     self.opt.zero_grad()
                     self.scheduler.step()
                     self.iter_count += 1
-                    print(f"Done updating optimizer and scheduler.step(), iter_count: {self.iter_count}, total_steps: {self.total_steps}")
 
                     if (
                         self.iter_count % self.config.train.checkpoint_interval == 0
                         or self.iter_count >= self.total_steps
                     ):
-                        print(f"Checkpointing, epoc:{epoc}, iter_count: {self.iter_count}, mini batch counter: {mbc}, number update per batch: {nubc}")
                         subfolder = f"checkpoint_{self.iter_count:0{len(str(self.total_steps))}d}"
                         directory = os.path.join(self.config.train.checkpoint_dir, subfolder)
                         logger.info(f"Saving intermediate checkpoint into {directory}")
@@ -594,11 +573,7 @@ class AccelerateRLTrainer(BaseRLTrainer):
 
                     if self.iter_count % self.config.train.eval_interval == 0 or self.iter_count >= self.total_steps:
                         results = self.evaluate()
-                        results_ref_model = self.evaluate_ref_model()
                         stats.update(results)
-                        print(f"Evaluation, epoc:{epoc}, iter_count: {self.iter_count}, total_steps: {self.total_steps}, mini batch counter: {mbc}, number update per batch: {nubc}")
-                        print(f"Evaluation, best reward: {best_reward}, epoc:{epoc}, config.train.eval_interval: {self.config.train.eval_interval}")
-
                         if ray.is_initialized():
                             session.report(filter_non_scalars(stats), checkpoint=checkpoint)
 
@@ -631,7 +606,6 @@ class AccelerateRLTrainer(BaseRLTrainer):
                     self.accelerator.log(stats, step=self.iter_count)
 
                     if self.iter_count >= self.total_steps:
-                        print(f"Return results. iter_count > total_steps, iter_count: {self.iter_count}, total_steps: {self.total_steps}")
                         return results
 
                 self.post_backward_callback()
