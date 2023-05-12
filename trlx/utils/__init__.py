@@ -9,6 +9,8 @@ from itertools import repeat
 from numbers import Number
 from typing import Any, Dict, Iterable, Tuple
 
+import transformers
+
 import numpy as np
 import torch
 from accelerate import Accelerator
@@ -80,6 +82,7 @@ class OptimizerName(str, Enum):
 
     ADAM: str = "adam"
     ADAMW: str = "adamw"
+    ADAFACTOR: str = "adafactor"
     ADAM_8BIT_BNB: str = "adam_8bit_bnb"
     ADAMW_8BIT_BNB: str = "adamw_8bit_bnb"
     SGD: str = "sgd"
@@ -96,6 +99,8 @@ def get_optimizer_class(name: OptimizerName):
         return torch.optim.Adam
     if name == OptimizerName.ADAMW:
         return torch.optim.AdamW
+    if name == OptimizerName.ADAFACTOR:
+        return transformers.Adafactor
     if name == OptimizerName.ADAM_8BIT_BNB.value:
         try:
             from bitsandbytes.optim import Adam8bit

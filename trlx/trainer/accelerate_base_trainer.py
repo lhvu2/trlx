@@ -27,6 +27,8 @@ from trlx.utils import (
     get_scheduler_class,
     significant,
 )
+from transformers.optimization import AdafactorSchedule
+
 from trlx.utils.modeling import (
     flatten_dict,
     freeze_bottom_causal_layers,
@@ -114,9 +116,11 @@ class AccelerateRLTrainer(BaseRLTrainer):
             elif config.train.tracker == "tensorboard":
                 # flatten config for tensorboard, split list in hparams into flatten config
                 config_dict_flat = flatten_dict(config_dict)
-                config_dict_flat["optimizer/kwargs/beta_1"] = config_dict_flat["optimizer/kwargs/betas"][0]
-                config_dict_flat["optimizer/kwargs/beta_2"] = config_dict_flat["optimizer/kwargs/betas"][1]
-                config_dict_flat.pop("optimizer/kwargs/betas", None)
+                if "optimizer/kwargs/betas" in config_dict_flat:
+                    config_dict_flat["optimizer/kwargs/beta_1"] = config_dict_flat["optimizer/kwargs/betas"][0]
+                    config_dict_flat["optimizer/kwargs/beta_2"] = config_dict_flat["optimizer/kwargs/betas"][1]
+                    config_dict_flat.pop("optimizer/kwargs/betas", None)
+
                 for ix, tag in enumerate(config_dict_flat.pop("train/tags")):
                     config_dict_flat[f"train/tag_{ix}"] = tag
 
@@ -194,8 +198,12 @@ class AccelerateRLTrainer(BaseRLTrainer):
         """
         Returns a learning rate scheduler derived from an instance's TRLConfig
         """
-        scheduler_class = get_scheduler_class(self.config.scheduler.name)
-        scheduler = scheduler_class(self.opt, **self.config.scheduler.kwargs)
+        if self.config.optimizer.name == 'adafactor':
+            scheduler = AdafactorSchedule(self.opt)
+        else:
+            scheduler_class = get_scheduler_class(self.config.scheduler.name)
+            scheduler = scheduler_class(self.opt, **self.config.scheduler.kwargs)
+
         return scheduler
 
     def decode(
