@@ -160,11 +160,16 @@ class PPOConfig(MethodConfig):
         advantages_reversed = []
         for t in reversed(range(response_length)):
             nextvalues = values[:, t + 1] if t < response_length - 1 else 0.0
-            delta = rewards[:, t] + self.gamma * nextvalues - values[:, t]
-            lastgaelam = delta + self.gamma * self.lam * lastgaelam
+            delta = rewards[:, t] + self.gamma * nextvalues - values[:, t]  # Bellman error calculation. estimate how much better if you take a path against 
+            # the average value across all possible paths
+            lastgaelam = delta + self.gamma * self.lam * lastgaelam   # last generalized advantage estimation
             advantages_reversed.append(lastgaelam)
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
-        returns = advantages + values
+       
+        print(f"inside get_advantages_and_returns(): advantages: {advantages}")
+        returns = advantages + values  # returns is like a Q function
+        print(f"inside get_advantages_and_returns(): returns: {returns}")
+
         if use_whitening:
             advantages = whiten(advantages)
         return advantages.detach(), returns
