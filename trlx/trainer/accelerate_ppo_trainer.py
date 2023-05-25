@@ -147,7 +147,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
         old_rewards = batch.rewards.to(self.accelerator.device)
         response_length = old_rewards.shape[1]
 
-        print("PPOTrainer loss() starts")
+        #print("PPOTrainer loss() starts")
         advantages, returns = self.config.method.get_advantages_and_returns(old_values, old_rewards, response_length)
 
         if self.config.model.model_arch_type == "seq2seq":
@@ -227,8 +227,8 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             mask=mask,
         )
 
-        #print(f"PPOTrainer loss(), after calling PPO2 loss(), loss: {loss}")
-        #print(f"PPOTrainer loss(), after calling PPO2 loss(), stats: {stats}")
+        print(f"PPOTrainer loss(), after calling PPO2 loss(), loss: {loss}")
+        print(f"PPOTrainer loss(), after calling PPO2 loss(), stats: {stats}")
         return loss, stats
 
     def setup_rollout_logging(self, config):
