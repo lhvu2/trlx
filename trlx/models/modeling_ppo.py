@@ -189,13 +189,13 @@ class PPOConfig(MethodConfig):
         - https://stable-baselines.readthedocs.io/en/master/modules/ppo2.html
         """
 
-        print(f"Modeling PPO loss(), advantages: {advantages}")
-        print(f"Modeling PPO loss(), returns: {returns}")
+        print(f"PPO2 loss(), advantages: {advantages}")
+        print(f"PPO2 loss(), returns: {returns}")
 
-        print(f"Modeling PPO loss(), old_values: {old_values}")
-        print(f"Modeling PPO loss(), values: {values}")
-        print(f"Modeling PPO loss(), old_logprobs: {old_logprobs}")
-        print(f"Modeling PPO loss(), logprobs: {logprobs}")
+        print(f"PPO2 loss(), old_values: {old_values}")
+        print(f"PPO2 loss(), values: {values}")
+        print(f"PPO2 loss(), old_logprobs: {old_logprobs}")
+        print(f"PPO2 loss(), logprobs: {logprobs}")
 
         values_clipped = torch.clamp(
             values,
@@ -204,25 +204,25 @@ class PPOConfig(MethodConfig):
         )
         n = mask.sum()
 
-        print(f"Modeling PPO loss(), values_clipped: {values_clipped}")
+        print(f"PPO2 loss(), values_clipped: {values_clipped}")
         vf_loss1 = (values - returns) ** 2
         vf_loss2 = (values_clipped - returns) ** 2
         vf_loss = 0.5 * torch.sum(torch.max(vf_loss1, vf_loss2) * mask) / n
         vf_clipfrac = torch.sum((vf_loss2 > vf_loss1).float() * mask) / n
 
-        print(f"Modeling PPO loss(), vf_loss1: {vf_loss1}")
-        print(f"Modeling PPO loss(), vf_loss2: {vf_loss2}")
-        print(f"Modeling PPO loss(), vf_loss: {vf_loss}")
+        print(f"PPO2 loss(), vf_loss1: {vf_loss1}")
+        print(f"PPO2 loss(), vf_loss2: {vf_loss2}")
+        print(f"PPO2 loss(), vf_loss: {vf_loss}")
 
         log_ratio = (logprobs - old_logprobs) * mask
         ratio = torch.exp(log_ratio)
-        print(f"Modeling PPO loss(), log_ratio: {log_ratio}")
-        print(f"Modeling PPO loss(), ratio: {ratio}")
+        print(f"PPO2 loss(), log_ratio: {log_ratio}")
+        print(f"PPO2 loss(), ratio: {ratio}")
         # Unbiased KL-div estimates (`k3`). Ref: http://joschu.net/blog/kl-approx.html
         with torch.no_grad():
             approx_kl = torch.mean((ratio - 1) - log_ratio)
 
-        print(f"Modeling PPO loss(), approx_kl: {approx_kl}")
+        print(f"PPO2 loss(), approx_kl: {approx_kl}")
 
         pg_loss1 = -advantages * ratio
         pg_loss2 = -advantages * torch.clamp(
@@ -233,11 +233,11 @@ class PPOConfig(MethodConfig):
         pg_loss = torch.sum(torch.max(pg_loss1, pg_loss2) * mask) / n
         pg_clipfrac = torch.sum((pg_loss2 > pg_loss1).float() * mask) / n
 
-        print(f"Modeling PPO loss(), pg_loss1: {pg_loss1}")
-        print(f"Modeling PPO loss(), pg_loss2: {pg_loss2}")
-        print(f"Modeling PPO loss(), pg_loss: {pg_loss}")
+        print(f"PPO2 loss(), pg_loss1: {pg_loss1}")
+        print(f"PPO2 loss(), pg_loss2: {pg_loss2}")
+        print(f"PPO2 loss(), pg_loss: {pg_loss}")
         loss = pg_loss + self.vf_coef * vf_loss
-        print(f"Modeling PPO loss(), loss: {loss}")
+        print(f"PPO2 loss(), loss: {loss}")
 
         stats = dict(
             losses=dict(
