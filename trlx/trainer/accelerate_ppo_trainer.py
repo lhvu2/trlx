@@ -147,14 +147,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
         old_rewards = batch.rewards.to(self.accelerator.device)
         response_length = old_rewards.shape[1]
 
-        print(f"inside loss(), old_rewards: {old_rewards}")
-        print(f"inside loss(), old_values: {old_values}")
-        print(f"inside loss(), response_length: {response_length}")
-
         advantages, returns = self.config.method.get_advantages_and_returns(old_values, old_rewards, response_length)
-
-        print(f"inside loss(), advantages: {advantages}")
-        print(f"inside loss(), returns: {returns}")
 
         if self.config.model.model_arch_type == "seq2seq":
             input_ids = query_tensors
@@ -190,8 +183,6 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             outputs = self.model(tokens, attention_mask, return_dict=True)
             logits = outputs.logits
             values_pred = outputs.value
-            print(f"inside loss(), values_pred: {values_pred}")
-
             values_pred = values_pred[:, :-1]
             logprobs = logprobs_of_labels(logits[:, :-1, :], tokens[:, 1:])
 
@@ -202,11 +193,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                 values_pred[:, start:end],
                 attention_mask[:, start:end],
             )
-            print(f"inside loss(), taking only output, start: {start}, end: {end}, response_length: {response_length}")
-            print(f"inside loss(), taking only output, values_pred: {values_pred}")
-            print(f"inside loss(), taking only output, logprobs: {logprobs}")
-            print(f"inside loss(), taking only output, mask: {mask}")
-            
+
         loss, stats = self.config.method.loss(
             logprobs=logprobs,
             values=values_pred,
@@ -216,8 +203,25 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             returns=returns,
             mask=mask,
         )
-        print(f"inside los(), PPO loss: {loss}")
-        print(f"inside los(), stats: {stats}")
+        print(
+            f"PPOTrainer loss(), model weights: {self.model.state_dict()['transformer.h.3.mlp.c_fc.weight']}")
+        print(f"PPOTrainer loss(), tokens: {tokens}")
+        print(f"PPOTrainer loss(), attention_mask: {attention_mask}")
+        print(f"PPOTrainer loss(), advantages: {advantages}")
+        print(f"PPOTrainer loss(), returns: {returns}")
+
+        print(f"PPOTrainer loss(), old_rewards: {old_rewards}")
+
+        print(f"PPOTrainer loss(), old_values: {old_values}")
+        print(f"PPOTrainer loss(), values_pred: {values_pred}")
+        print(f"PPOTrainer loss(), old_logprobs: {old_logprobs}")
+        print(f"PPOTrainer loss(), logprobs: {logprobs}")
+
+        print(
+            f"PPOTrainer loss(), taking only output, start: {start}, end: {end}, response_length: {response_length}")
+        print(f"PPOTrainer loss(), mask: {mask}")
+        print(f"PPOTrainer loss(), PPO loss: {loss}")
+        print(f"PPOTrainer loss(), stats: {stats}")
         return loss, stats
 
     def setup_rollout_logging(self, config):
