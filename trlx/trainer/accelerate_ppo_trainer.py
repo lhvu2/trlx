@@ -195,6 +195,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                 attention_mask[:, start:end],
             )
 
+        """
         print(
             f"PPOTrainer loss(), 'transformer.h.3.mlp.c_fc.weight': {self.model.state_dict()['transformer.h.3.mlp.c_fc.weight']}")
         print(f"PPOTrainer loss(), 'lm_head.weight': {self.model.state_dict()['lm_head.weight']}")
@@ -215,6 +216,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             f"PPOTrainer loss(), taking only output, start: {start}, end: {end}, response_length: {response_length}")
         print(f"PPOTrainer loss(), mask: {mask}")
         print("Calling PPO2 loss() ")
+        """
         loss, stats = self.config.method.loss(
             logprobs=logprobs,
             values=values_pred,
@@ -225,8 +227,8 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             mask=mask,
         )
 
-        print(f"PPOTrainer loss(), after calling PPO2 loss(), loss: {loss}")
-        print(f"PPOTrainer loss(), after calling PPO2 loss(), stats: {stats}")
+        #print(f"PPOTrainer loss(), after calling PPO2 loss(), loss: {loss}")
+        #print(f"PPOTrainer loss(), after calling PPO2 loss(), stats: {stats}")
         return loss, stats
 
     def setup_rollout_logging(self, config):
@@ -464,7 +466,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             else:
                 start = prompt_tensors.shape[1] - 1
 
-            print(f"attention_mask, shape: {attention_mask.shape}, value: {attention_mask}")
+            #print(f"attention_mask, shape: {attention_mask.shape}, value: {attention_mask}")
 
             log_ratio = (logprobs - ref_logprobs) * attention_mask[:, :-1]
             kl = log_ratio.exp() - 1 - log_ratio
@@ -473,8 +475,6 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
 
             logprobs = logprobs.cpu()
             ref_logprobs = ref_logprobs.cpu()
-            print(f"logprobs: {logprobs}")
-            print(f"ref_logprobs: {ref_logprobs}")
 
             prompt_tensors = prompt_tensors.cpu()
             sample_outputs = sample_outputs.cpu()
@@ -487,19 +487,23 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             all_values = [values[ix, start : ends[ix]] for ix in range(n_samples)]
             all_logprobs = [logprobs[ix, start : ends[ix]] for ix in range(n_samples)]
 
-            print(f"kl_ctl.value: {self.kl_ctl.value}")
             kl_penalty = self.kl_ctl.value * -log_ratio.cpu()
-            print(f"before, kl_penalty: {kl_penalty}")
             kl_penalty = [xs[start : ends[ix]] for ix, xs in enumerate(kl_penalty)]
-            print(f"after, kl_penalty: {kl_penalty}")
 
+            """
+            print(f"logprobs: {logprobs}")
+            print(f"ref_logprobs: {ref_logprobs}")
+            print(f"kl_ctl.value: {self.kl_ctl.value}")
+            print(f"before, kl_penalty: {kl_penalty}")
+            print(f"after, kl_penalty: {kl_penalty}")
+            """
             rollout_count = 0
 
             for sample_idx in range(n_samples):
                 rewards = kl_penalty[sample_idx]
-                print(f"set with kl_penalty, sample_idx: {sample_idx}, rewards: {rewards}")
                 rewards[-1] += scores[sample_idx].cpu()
-                print(f"updated with scores, sample_idx: {sample_idx}, rewards: {rewards}")
+                #print(f"set with kl_penalty, sample_idx: {sample_idx}, rewards: {rewards}")
+                #print(f"updated with scores, sample_idx: {sample_idx}, rewards: {rewards}")
 
                 ppo_rl_elements.append(
                     PPORLElement(
