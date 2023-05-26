@@ -181,7 +181,14 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
         else:
             tokens = torch.cat((query_tensors, response_tensors), dim=1)
             attention_mask = tokens.not_equal(self.tokenizer.pad_token_id).long().to(tokens.device)
-            outputs = self.model(tokens, attention_mask, return_dict=True)
+            
+            # calculate position_ids tensor
+            position_ids = attention_mask.cumsum(-1)-1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+
+            # position_ids = None
+
+            outputs = self.model(tokens, attention_mask, return_dict=True, position_ids=position_ids)
             logits = outputs.logits
             values_pred = outputs.value
             values_pred = values_pred[:, :-1]
@@ -195,7 +202,6 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
                 attention_mask[:, start:end],
             )
 
-        """
         print(
             f"PPOTrainer loss(), 'transformer.h.3.mlp.c_fc.weight': {self.model.state_dict()['transformer.h.3.mlp.c_fc.weight']}")
         print(f"PPOTrainer loss(), 'lm_head.weight': {self.model.state_dict()['lm_head.weight']}")
@@ -216,7 +222,7 @@ class AcceleratePPOTrainer(AccelerateRLTrainer):
             f"PPOTrainer loss(), taking only output, start: {start}, end: {end}, response_length: {response_length}")
         print(f"PPOTrainer loss(), mask: {mask}")
         print("Calling PPO2 loss() ")
-        """
+        
         loss, stats = self.config.method.loss(
             logprobs=logprobs,
             values=values_pred,
