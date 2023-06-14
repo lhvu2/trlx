@@ -189,9 +189,9 @@ class PPOConfig(MethodConfig):
         - https://stable-baselines.readthedocs.io/en/master/modules/ppo2.html
         """
         
-        """
         print(f"PPO2 loss(), advantages: {advantages}")
         print(f"PPO2 loss(), returns: {returns}")
+        """
         print(f"PPO2 loss(), old_values: {old_values}")
         print(f"PPO2 loss(), values: {values}")
         print(f"PPO2 loss(), old_logprobs: {old_logprobs}")
@@ -217,15 +217,15 @@ class PPOConfig(MethodConfig):
         with torch.no_grad():
             approx_kl = torch.mean((ratio - 1) - log_ratio)
 
-        """
         print(f"PPO2 loss(), values_clipped: {values_clipped}")
         print(f"PPO2 loss(), vf_loss1: {vf_loss1}")
         print(f"PPO2 loss(), vf_loss2: {vf_loss2}")
         print(f"PPO2 loss(), vf_loss: {vf_loss}")
+        print(f"PPO2 loss(), old_logprobs: {old_logprobs}")
+        print(f"PPO2 loss(), logprobs: {logprobs}")
         print(f"PPO2 loss(), log_ratio: {log_ratio}")
         print(f"PPO2 loss(), ratio: {ratio}")
         print(f"PPO2 loss(), approx_kl: {approx_kl}")
-        """
 
         pg_loss1 = -advantages * ratio
         pg_loss2 = -advantages * torch.clamp(
